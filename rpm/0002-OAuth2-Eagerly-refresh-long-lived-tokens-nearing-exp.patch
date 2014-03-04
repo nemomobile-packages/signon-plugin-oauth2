@@ -1,0 +1,47 @@
+From 7b493221cbe154dcefd45314d73fe16c9881f63a Mon Sep 17 00:00:00 2001
+From: Chris Adams <chris.adams@jollamobile.com>
+Date: Tue, 4 Mar 2014 12:30:54 +1000
+Subject: [PATCH] OAuth2: Eagerly refresh long-lived tokens nearing expiry
+
+This commit adds a check in the RetrieveStoredTokens codepath
+which causes it to return false if the token is long lived
+(arbitrarily defined as having an ExpiresIn time greater than one
+minute) which will expire in less than one minute.
+In doing so, it will force an "eager" refresh of the token.
+
+This is useful for two reasons: first, clients which may perform
+long-duration sync operations which involve multiple calls using
+the AccessToken previously could not rely on the validity of the
+token if they requested that token once at the beginning of their
+operation and then cached it in memory; second, operations which
+might commonly occur (eg, due to a sync schedule) might often
+fall on an "expiry boundary" if the token expires regularly (eg
+every hour), where-in the token might be regularly returned with
+one second remaining on it - which means that if a request using
+that token were made more than one second after the token itself
+was requested, that request would have failed.
+---
+ src/oauth2plugin.cpp |    7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/oauth2plugin.cpp b/src/oauth2plugin.cpp
+index b7940ef..a3f3f73 100644
+--- a/src/oauth2plugin.cpp
++++ b/src/oauth2plugin.cpp
+@@ -206,6 +206,13 @@ bool OAuth2Plugin::respondWithStoredToken(const QVariantMap &token,
+             TRACE() << "Stored token is expired";
+             return false;
+         }
++
++        // if the token is long-lived and would expire very soon
++        // also ignore it (that is, eagerly force it to be refreshed)
++        if (timeToExpiry < 60 && token.value(EXPIRY).toUInt() > 60) {
++            TRACE() << "Stored token will expire soon - forcing eager refresh";
++            return false;
++        }
+     }
+ 
+     /* if the stored token does not contain all the requested scopes,
+-- 
+1.7.10.4
+
